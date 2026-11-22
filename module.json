@@ -1,0 +1,97 @@
+{
+  "id": "arcano-westruun",
+  "title": "Westruun — City Map (Arcano Lab)",
+  "description": "Westruun (Tal'Dorei) in 16k for D&D 5e: a journal and a scene for every ward and location, 56 NPCs with sheet, portrait and token, names the GM reveals one by one, street and house lights that turn on at night, clouds, rain and lightning over Greystone Tower, ambient sounds and 5 playlists. English and Brazilian Portuguese. Beta, unofficial fan content.",
+  "version": "1.0.0",
+  "url": "https://github.com/arcanolab/arcano-westruun",
+  "manifest": "https://github.com/arcanolab/arcano-westruun/releases/latest/download/module.json",
+  "download": "https://github.com/arcanolab/arcano-westruun/releases/download/v1.0.0/arcano-westruun.zip",
+  "authors": [
+    {
+      "name": "Arcano Lab"
+    }
+  ],
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14"
+  },
+  "esmodules": [
+    "scripts/main.mjs"
+  ],
+  "styles": [
+    "styles/westruun.css"
+  ],
+  "languages": [
+    {
+      "lang": "pt-BR",
+      "name": "Português (Brasil)",
+      "path": "lang/pt-BR.json"
+    },
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "packs": [
+    {
+      "name": "westruun-pt",
+      "label": "Westruun (PT-BR)",
+      "path": "packs/westruun-pt",
+      "type": "Adventure",
+      "ownership": {
+        "PLAYER": "NONE",
+        "ASSISTANT": "OWNER"
+      },
+      "system": "dnd5e"
+    },
+    {
+      "name": "westruun-en",
+      "label": "Westruun (EN)",
+      "path": "packs/westruun-en",
+      "type": "Adventure",
+      "ownership": {
+        "PLAYER": "NONE",
+        "ASSISTANT": "OWNER"
+      },
+      "system": "dnd5e"
+    }
+  ],
+  "relationships": {
+    "recommends": [
+      {
+        "id": "sequencer",
+        "type": "module",
+        "reason": "Animated lightning over Greystone Tower"
+      },
+      {
+        "id": "JB2A_DnD5e",
+        "type": "module",
+        "reason": "Lightning and storm cloud animations"
+      },
+      {
+        "id": "fxmaster",
+        "type": "module",
+        "reason": "Clouds over the city, rain, fog and birds"
+      }
+    ],
+    "systems": [
+      {
+        "id": "dnd5e",
+        "type": "system",
+        "compatibility": {
+          "minimum": "5.0"
+        }
+      }
+    ],
+    "requires": [
+      {
+        "id": "arcano-hub",
+        "type": "module",
+        "manifest": "https://github.com/arcanolab/arcano-hub/releases/latest/download/module.json",
+        "reason": "Arcano Lab button on the scene controls, where the Westruun GM panel opens"
+      }
+    ]
+  },
+  "flags": {}
+}

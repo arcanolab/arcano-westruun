@@ -1,0 +1,43 @@
+# Publica o zip e o module.json quando você cria uma release (tag vX.Y.Z).
+# Para refazer os arquivos de uma release que já existe com o código atual da main:
+#   Actions → Release → Run workflow → informe a tag (ex.: v0.2.0).
+name: Release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release a atualizar (ex.: v0.2.0)"
+        required: true
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versão e links do manifest
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          V="${TAG#v}"
+          jq --arg v "$V" --arg repo "$GITHUB_REPOSITORY" --arg tag "$TAG" '
+            .version = $v
+            | .url = "https://github.com/\($repo)"
+            | .manifest = "https://github.com/\($repo)/releases/latest/download/module.json"
+            | .download = "https://github.com/\($repo)/releases/download/\($tag)/arcano-westruun.zip"
+          ' module.json > m.json && mv m.json module.json
+      - name: Empacotar
+        run: |
+          zip -r -q arcano-westruun.zip module.json scripts styles lang packs data assets CREDITOS.md README.md \
+            -x "packs/*/LOCK" "packs/*/LOG" "packs/*/LOG.old" "*.bak"
+          ls -la arcano-westruun.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            module.json
+            arcano-westruun.zip

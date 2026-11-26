@@ -42,7 +42,7 @@ Hooks.on("renderSettingsConfig", (app, el) => {
 });
 Hooks.once("ready", () => {
   game.modules.get(MOD).api = { construir, Painel, exportarAventura, removerCampanha, Raio, cenaWestruun, criarClima, criarComportamentosAlas, lerDados, alternarLuzesCasas, atualizar,
-    instalar, reparar, organizarDiarios, garantirClima, consertarRotulos, garantirCenas, garantirNuvens, garantirCreditos, consertarTokens, cenaDaImagem };
+    instalar, reparar, organizarDiarios, garantirClima, consertarRotulos, garantirCenas, garantirNuvens, garantirCreditos, consertarTokens, cenaDaImagem, curarCaminhos, temWestruun };
   Raio.reiniciar();
 });
 
@@ -378,10 +378,11 @@ async function sincronizarPaginas(j, pages, tudo = false) {
 }
 async function atualizar({ lang = null, tudo = false } = {}) {
   if (!game.user.isGM) return ui.notifications.warn(L("SoMestre"));
-  const cena = game.scenes.find(s => s.getFlag(MOD, "mapa"));
+  const cena = game.scenes.find(s => s.getFlag(MOD, "mapa")) ?? (tudo ? await adotarCena() : null);
   if (!cena) return ui.notifications.warn(L("Vazio"));
   lang ??= cena.getFlag(MOD, "lang") ?? "pt";
   const D = await lerDados(lang), T = D.textos, pt = lang === "pt", C = D.cena, R = { geracao: D.geracao, lang };
+  if (tudo) R.adotadosDiarios = await adotarDiarios(D, lang);
   const k = cena.width / C.largura < 0.75 ? 0.5 : 1, mapa = k === 0.5 ? C.mapa8k : C.mapa;
   // ---- 1. fundo da cena
   const nivel = cena.levels?.contents?.[0] ?? null;
@@ -428,12 +429,15 @@ async function atualizar({ lang = null, tudo = false } = {}) {
   const raizJ = game.folders.find(f => f.type === "JournalEntry" && f.getFlag(MOD, "raiz")), sub = (nome, pai) => game.folders.find(f => f.type === "JournalEntry" && f.name === nome && f.folder?.id === pai?.id);
   const fNpcJ = sub(T.npcs, raizJ), fAlas = sub(T.alas, raizJ), fA = game.folders.find(f => f.type === "Actor" && f.getFlag(MOD, "raiz"));
   const npcsMud = D.npcs.filter(n => tudo || n.mudou); R.npcs = 0; R.npcsNovos = 0;
+  const nomeOutro = {}; if (tudo) { try { for (const o of (await lerDados(pt ? "en" : "pt")).npcs) nomeOutro[o.id] = o.nome; } catch (e) { /* sem o outro idioma: casa só pelo nome deste */ } }
   for (const n of npcsMud) {
     let a = X.atores[n.id];
     const tex = { src: n.tok || n.img }, ring = { enabled: !!n.ring, subject: { texture: n.img } };
     if (!a) {
-      const doMundo = (n.mundo && game.actors.getName(n.mundo)) || game.actors.getName(n.nome);
-      if (doMundo && !doMundo.getFlag(MOD, "npc")) { a = doMundo; await a.setFlag(MOD, "npc", n.id); await a.setFlag(MOD, "deFora", true); }
+      const livre = nome => nome ? game.actors.find(x => x.name === nome && !x.getFlag(MOD, "npc") && !deOutroArcano(x)) : null, doMundo = livre(n.mundo) ?? livre(n.nome) ?? livre(nomeOutro[n.id]);
+      if (doMundo && !doMundo.getFlag(MOD, "npc") && !deOutroArcano(doMundo)) { a = doMundo; await a.setFlag(MOD, "npc", n.id);
+        if (await artePropria(a)) await a.setFlag(MOD, "deFora", true);
+        else { await a.update({ img: n.img, "prototypeToken.texture.src": tex.src, "prototypeToken.ring": ring }); R.adotados = (R.adotados ?? 0) + 1; } }
       else {
         let o = await fichaSRD(n.base); if (!o) o = { type: "npc", system: {} };
         X.baseSRD[n.id] = o._base; delete o._base; delete o._id; delete o.folder; delete o._stats; delete o.ownership; delete o.sort;
@@ -443,7 +447,7 @@ async function atualizar({ lang = null, tudo = false } = {}) {
         o.flags = foundry.utils.mergeObject(o.flags ?? {}, F({ npc: n.id })); a = await Actor.create(o); R.npcsNovos++;
       }
       X.atores[n.id] = a;
-    } else if (!a.getFlag(MOD, "deFora")) await a.update({ img: n.img, "prototypeToken.texture.src": tex.src, "prototypeToken.ring": ring });
+    } else if (!a.getFlag(MOD, "deFora") || !(await artePropria(a))) await a.update({ img: n.img, "prototypeToken.texture.src": tex.src, "prototypeToken.ring": ring });
   }
   for (const n of npcsMud) {                                       // diários dos NPCs (depois dos atores, para os links de ficha)
     const pages = [Object.assign(pagTexto(T.ficha, resolver(n.ficha), 0), { _mudou: true })]; if (!n.faltaImg) pages.push(Object.assign(pagImg(T.retrato, n.img, 100), { _mudou: true }));
@@ -488,7 +492,7 @@ async function instalar({ lang = null, resolucao = "16k" } = {}) {
   if (!game.user.isGM) return ui.notifications.warn(L("SoMestre"));
   if (_ocupado) return ui.notifications.warn(L("Ocupado"));
   lang ??= game.i18n.lang.startsWith("pt") ? "pt" : "en";
-  if (game.scenes.some(s => s.getFlag(MOD, "mapa"))) return reparar();
+  if (temWestruun()) return reparar();
   if (!await confirmar(L("InstalarTitulo"), `<p>${L("InstalarTexto", { lang: lang.toUpperCase() })}</p>`)) return;
   _ocupado = true;
   try { const cena = await construir({ lang, resolucao }); Painel.abrir(); return cena; } finally { _ocupado = false; }
@@ -501,9 +505,10 @@ async function reparar({ perguntar = true } = {}) {
   _ocupado = true;
   try {
     const R = await atualizar({ tudo: true }); if (!R) return R;
-    R.cenas = await garantirCenas({ lang: R.lang }); R.creditos = await garantirCreditos({ lang: R.lang, tudo: true }); R.tokens = await consertarTokens();
+    R.cenas = await garantirCenas({ lang: R.lang }); R.creditos = await garantirCreditos({ lang: R.lang, tudo: true }); R.tokens = await consertarTokens(); R.cura = await curarCaminhos();
     R.organizados = await organizarDiarios({ avisar: false });
     ui.notifications.info(L("ReparoFeito", { cenas: R.cenas.criadas, tokens: R.tokens }));
+    await relatorioReparo(R);
     return R;
   } finally { _ocupado = false; Painel._inst?.render(); }
 }
@@ -634,6 +639,105 @@ async function garantirCreditos({ lang = null, pasta = null, tudo = false } = {}
   }
   return j;
 }
+/* ---------------------------------------------------------------- reparo de mundos de importação antiga (1.0.1) ----------------------------------------------------------------
+   Mundo que importou a Aventura antiga (ou atualizou o módulo por cima) pode ter a cena, os NPCs e os diários SEM a marca do módulo, e imagens que apontam para
+   arquivos que não existem mais. O reparo adota esses documentos pelo nome, cura os caminhos quebrados e mostra no chat o que fez e o que não conseguiu. */
+const CAMP = "modules/arcano-westruun-campanha";
+const _existe = new Map();
+async function existe(url) {
+  if (!url) return false; const u = String(url).split("?")[0]; if (!/^(modules|worlds|assets|systems|icons|ui)\//.test(u)) return true;      // http, data: e afins não se conferem
+  if (!_existe.has(u)) { let ok = false; try { ok = (await fetch(encodeURI(decodeURI(u)), { method: "HEAD", cache: "no-store" })).ok; } catch (e) { ok = false; } _existe.set(u, ok); }
+  return _existe.get(u);
+}
+const deOutroArcano = doc => Object.keys(doc?.flags ?? {}).some(k => k.startsWith("arcano-") && k !== MOD && !["arcano-formas", "arcano-doors", "arcano-hub"].includes(k));
+/* O ator tem arte própria (de outro módulo ou do mundo) que existe? Então é "de fora" e a ficha/arte dele não é tocada. Arte do próprio módulo, ou quebrada, não conta. */
+async function artePropria(a) {
+  const img = a.img ?? "", tok = a.prototypeToken?.texture?.src ?? "";
+  if (img.startsWith(`${ROOT}/`) || tok.startsWith(`${ROOT}/`) || /mystery-man/.test(img)) return false;
+  return (await existe(img)) && (await existe(tok));
+}
+function temWestruun() {
+  return game.scenes.some(s => s.getFlag(MOD, "mapa")) || game.actors.some(a => a.getFlag(MOD, "npc")) || game.journal.some(j => j.getFlag(MOD, "local")) || !!cenaAntiga();
+}
+function cenaAntiga() {           // cena de Westruun de importação antiga: sem a marca, mas com o mapa do módulo no fundo
+  const doModulo = s => [s.background?.src, ...(s.levels?.contents ?? []).map(l => l.background?.src)].some(x => String(x ?? "").startsWith(`${ROOT}/assets/mapa/`));
+  return game.scenes.find(s => !s.getFlag(MOD, "interna") && doModulo(s)) ?? null;
+}
+async function adotarCena() {
+  const cena = cenaAntiga(); if (!cena) return null;
+  const en = game.journal.some(j => /Sunkissed Tavern|Cobalt Reserve|Greystone Tower/i.test(j.name)), lang = en ? "en" : "pt";
+  await cena.update({ flags: F({ mapa: true, lang }) }); return cena;
+}
+/* Diários de NPC e de local que vieram sem a marca: casa pelo nome (em português ou em inglês) e marca. Não toca em diário de outro módulo Arcano. */
+async function adotarDiarios(D, lang) {
+  let O = null; try { O = await lerDados(lang === "pt" ? "en" : "pt"); } catch (e) { O = null; }
+  const nomes = (lista, outra, id) => { const o = outra?.find(x => x.id === id); return [lista.find(x => x.id === id)?.nome, o?.nome].filter(Boolean); };
+  const livres = game.journal.filter(j => !j.getFlag(MOD, "npc") && !j.getFlag(MOD, "local") && !j.getFlag(MOD, "geral") && !j.getFlag(MOD, "hist") && !deOutroArcano(j));
+  const temNpc = new Set(game.journal.map(j => j.getFlag(MOD, "npc")).filter(Boolean)), temLocal = new Set(game.journal.map(j => j.getFlag(MOD, "local")).filter(Boolean)); let n = 0;
+  for (const l of D.locais) { if (temLocal.has(l.id)) continue; const ns = nomes(D.locais, O?.locais, l.id), j = livres.find(x => ns.includes(x.name) && !x.getFlag(MOD, "local"));
+    if (j) { await j.update({ flags: F({ local: l.id, ala: l.ala, descoberto: !!l.descoberto, secreto: !!l.secreto, campanha: !!l.campanhaSo }) }); temLocal.add(l.id); n++; } }
+  for (const p of D.npcs) { if (temNpc.has(p.id)) continue; const ns = nomes(D.npcs, O?.npcs, p.id), j = livres.find(x => ns.includes(x.name) && !x.getFlag(MOD, "local") && !x.getFlag(MOD, "npc"));
+    if (j) { await j.setFlag(MOD, "npc", p.id); temNpc.add(p.id); n++; } }
+  return n;
+}
+/* Cura: todo caminho do módulo que não existe mais é trocado pelo arquivo atual de mesmo nome (com ou sem a mesma extensão). O que não tem substituto vai para o relatório. */
+async function curarCaminhos() {
+  const validos = new Map(), porNome = (p) => p.split("/").pop().toLowerCase(), semExt = p => porNome(p).replace(/\.[a-z0-9]+$/, "");
+  for (const lg of ["pt", "en"]) { let t = ""; try { t = await (await fetch(`${ROOT}/data/westruun_${lg}.json`)).text(); } catch (e) { continue; }
+    for (const m of t.matchAll(/modules\/arcano-westruun\/[^"'\\<>()?]+?\.(?:webp|png|jpe?g|svg|ogg|mp3|wav|webm)/gi)) { const u = decodeURI(m[0]); validos.set(porNome(u), u); if (!validos.has("~" + semExt(u))) validos.set("~" + semExt(u), u); } }
+  const R = { trocados: 0, semSubstituto: new Map(), fora: new Map() };
+  const novo = async (src, onde) => {
+    const u = String(src ?? "").split("?")[0]; if (!u || await existe(u)) return null;
+    if (!u.startsWith(`${ROOT}/`)) { R.fora.set(u, onde); return null; }
+    const comp = u.replace(`${ROOT}/`, `${CAMP}/`); if (await existe(comp)) return comp;          // conteúdo da campanha: mora no módulo particular arcano-westruun-campanha
+    const cand = validos.get(porNome(u)) ?? validos.get("~" + semExt(u));
+    if (cand && cand !== u && await existe(cand)) return cand;
+    R.semSubstituto.set(u, onde); return null;
+  };
+  for (const a of game.actors) { const u = {};
+    const i = await novo(a.img, a.name); if (i) u.img = i;
+    const t = await novo(a.prototypeToken?.texture?.src, a.name); if (t) u["prototypeToken.texture.src"] = t;
+    const anel = a.prototypeToken?.ring?.subject?.texture, r = await novo(anel, a.name); if (r) u["prototypeToken.ring.subject.texture"] = r;
+    else if (anel && !(await existe(anel)) && (a.getFlag(MOD, "npc") || a.getFlag(MOD, "campanha"))) { u["prototypeToken.ring.subject.texture"] = u.img ?? a.img; R.fora.delete(String(anel).split("?")[0]); }   // anel apontando para um acervo que só existe no PC de quem montou
+    if (Object.keys(u).length) { await a.update(u); R.trocados += Object.keys(u).length; } }
+  for (const j of game.journal) { const upd = [];
+    for (const pg of j.pages) { const u = { _id: pg.id }; let mudou = false;
+      if (pg.type === "image") { const x = await novo(pg.src, `${j.name} / ${pg.name}`); if (x) { u.src = x; mudou = true; } }
+      else if (pg.type === "text" && pg.text?.content?.includes(`${ROOT}/`)) { let c = pg.text.content;
+        for (const m of [...c.matchAll(/modules\/arcano-westruun\/[^"'\\<>()?]+?\.(?:webp|png|jpe?g|svg)/gi)]) { const x = await novo(m[0], `${j.name} / ${pg.name}`); if (x) c = c.split(m[0]).join(x); }
+        if (c !== pg.text.content) { u["text.content"] = c; mudou = true; } }
+      if (mudou) upd.push(u); }
+    if (upd.length) { await j.updateEmbeddedDocuments("JournalEntryPage", upd); R.trocados += upd.length; } }
+  for (const sc of game.scenes) { const tk = [];
+    for (const t of sc.tokens) { const x = await novo(t.texture?.src, `${sc.name} / token ${t.name}`); if (x) tk.push({ _id: t.id, "texture.src": x }); }
+    if (tk.length) { await sc.updateEmbeddedDocuments("Token", tk); R.trocados += tk.length; }
+    const lv = []; for (const l of sc.levels?.contents ?? []) { const x = await novo(l.background?.src, `${sc.name} / fundo`); if (x) lv.push({ _id: l.id, "background.src": x }); }
+    if (lv.length) { await sc.updateEmbeddedDocuments("Level", lv); R.trocados += lv.length; }
+    const tl = []; for (const t of sc.tiles) { const x = await novo(t.texture?.src, `${sc.name} / tile`); if (x) tl.push({ _id: t.id, "texture.src": x }); }
+    if (tl.length) { await sc.updateEmbeddedDocuments("Tile", tl); R.trocados += tl.length; }
+    const th = await novo(sc.thumb, `${sc.name} / miniatura`); if (th) { await sc.update({ thumb: th }); R.trocados++; } }
+  for (const pl of game.playlists) { const sd = [];
+    for (const f of pl.sounds) { const x = await novo(f.path, `${pl.name} / ${f.name}`); if (x) sd.push({ _id: f.id, path: x }); }
+    if (sd.length) { try { await pl.updateEmbeddedDocuments("PlaylistSound", sd); R.trocados += sd.length; } catch (e) { if (!String(e).includes("audio is unlocked")) throw e; } } }
+  const faltaCamp = [...R.semSubstituto.keys()].filter(u => u.startsWith(`${ROOT}/assets/campanha/`)).length;
+  return { trocados: R.trocados, semSubstituto: [...R.semSubstituto], fora: [...R.fora], faltaCamp };
+}
+/* Relatório do reparo, só para os mestres: o que foi feito e o que continua quebrado (para mandar ao Arcano Lab se precisar). */
+async function relatorioReparo(R) {
+  const pt = (R.lang ?? "pt") === "pt", c = R.cura ?? { trocados: 0, semSubstituto: [], fora: [] };
+  const li = xs => xs.slice(0, 30).map(([u, onde]) => `<li><code>${esc(u)}</code><br><small>${esc(onde)}</small></li>`).join("") + (xs.length > 30 ? `<li>… +${xs.length - 30}</li>` : "");
+  const linhas = pt ? [`NPCs atualizados: <b>${R.npcs ?? 0}</b> (${R.npcsNovos ?? 0} criados, ${R.adotados ?? 0} adotados de importação antiga)`, `Locais: <b>${R.locais ?? 0}</b> (${R.paginas ?? 0} páginas)`,
+      `Diários adotados pelo nome: <b>${R.adotadosDiarios ?? 0}</b>`, `Cenas de locais criadas: <b>${R.cenas?.criadas ?? 0}</b>`, `Tokens em cena corrigidos: <b>${R.tokens ?? 0}</b>`, `Imagens e sons com caminho curado: <b>${c.trocados}</b>`]
+    : [`NPCs updated: <b>${R.npcs ?? 0}</b> (${R.npcsNovos ?? 0} created, ${R.adotados ?? 0} adopted from an old import)`, `Locations: <b>${R.locais ?? 0}</b> (${R.paginas ?? 0} pages)`,
+      `Journals adopted by name: <b>${R.adotadosDiarios ?? 0}</b>`, `Location scenes created: <b>${R.cenas?.criadas ?? 0}</b>`, `Placed tokens fixed: <b>${R.tokens ?? 0}</b>`, `Images and sounds with healed paths: <b>${c.trocados}</b>`];
+  let html = `<h3>Westruun ${game.modules.get(MOD).version} — ${pt ? "reparo" : "repair"}</h3><ul>${linhas.map(l => `<li>${l}</li>`).join("")}</ul>`;
+  if (c.semSubstituto.length) html += `<p><b>${pt ? "Arquivos do módulo que não existem mais e não têm substituto" : "Module files that no longer exist and have no replacement"} (${c.semSubstituto.length}):</b></p><ul>${li(c.semSubstituto)}</ul>`;
+  if (c.faltaCamp) html += `<p><b>${pt ? `${c.faltaCamp} imagens são da campanha particular. Instale o módulo <code>arcano-westruun-campanha</code> no servidor e rode o reparo de novo.` : `${c.faltaCamp} images belong to the private campaign pack. Install the <code>arcano-westruun-campanha</code> module on the server and run the repair again.`}</b></p>`;
+  if (c.fora.length) html += `<p><b>${pt ? "Arquivos de fora do módulo que não existem neste servidor" : "Files outside the module that do not exist on this server"} (${c.fora.length}):</b></p><ul>${li(c.fora)}</ul>`;
+  if (!c.semSubstituto.length && !c.fora.length) html += `<p>${pt ? "Nenhuma imagem ou som quebrado no mundo." : "No broken image or sound left in this world."}</p>`;
+  await ChatMessage.create({ content: html, whisper: game.users.filter(u => u.isGM).map(u => u.id), speaker: { alias: "Westruun" } });
+}
+
 /* Tokens já colocados em cena que ainda mostram o retrato (ou o boneco padrão) passam a usar o token do NPC. */
 async function consertarTokens() {
   if (!game.user.isGM) return 0; let n = 0;

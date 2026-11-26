@@ -1,6 +1,6 @@
 # Westruun — City Map (Arcano Lab)
 
-The city of Westruun (Tal'Dorei) for Foundry VTT v14 and D&D 5e, in English and Brazilian Portuguese. **Beta 1.0.0**.
+The city of Westruun (Tal'Dorei) for Foundry VTT v14 and D&D 5e, in English and Brazilian Portuguese. **Beta 1.0.1**.
 
 - 16k city map with a title, ward and gate names, and a name for every location that the GM shows or hides one by one
 - A journal for every ward and location: description for players, GM guide, hooks and rumors
